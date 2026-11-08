@@ -14,7 +14,7 @@
   <style>
     body { margin: 0; background: #080c14; color: #f8fafc; font-family: Inter, system-ui, sans-serif; }
     .panel { background: rgba(15,23,42,.9); border: 1px solid rgba(148,163,184,.16); }
-    input, select { color-scheme: dark; }
+    input { color-scheme: dark; }
   </style>
 </head>
 <body>
@@ -37,6 +37,13 @@
   </script>
   <script type="text/babel">
     const {useEffect, useMemo, useRef, useState} = React;
+    const EMAIL_DOMAIN = '@hotelmandachi.com';
+    const USERS = {
+      ['daniel' + EMAIL_DOMAIN]: {name:'Daniel', role:'Administrator', canEdit:true, isAdmin:true},
+      ['anca' + EMAIL_DOMAIN]: {name:'Anca', role:'Editor', canEdit:true, isAdmin:false},
+      ['nicoleta' + EMAIL_DOMAIN]: {name:'Nicoleta', role:'Editor', canEdit:true, isAdmin:false},
+      ['anisoara' + EMAIL_DOMAIN]: {name:'Anișoara', role:'Doar vizualizare', canEdit:false, isAdmin:false}
+    };
     const INITIAL_EVENTS = [
       {id:'1',contractNo:'CTR-101',clientName:'Ion & Maria',date:'2026-05-15',type:'Nuntă',hall:'Magnifique',adultGuests:150,kidGuests:10,adultPrice:400,kidPrice:200,advancePaid:20000,foodCost:25000,staffCost:8000,otherCost:5000},
       {id:'2',contractNo:'CTR-102',clientName:'Firma IT SRL',date:'2026-06-20',type:'Corporate',hall:'Cristal',adultGuests:300,kidGuests:0,adultPrice:350,kidPrice:0,advancePaid:30000,foodCost:45000,staffCost:12000,otherCost:8000}
@@ -51,46 +58,55 @@
     function App(){
       const [user,setUser]=useState(null), [authReady,setAuthReady]=useState(false);
       const [events,setEvents]=useState([]), [logs,setLogs]=useState([]);
-      const [status,setStatus]=useState('Se conectează…'), [error,setError]=useState('');
+      const [status,setStatus]=useState('Autentifică-te pentru a continua.'), [error,setError]=useState('');
       const [tab,setTab]=useState('events'), [modal,setModal]=useState(null);
       const seedStarted=useRef(false);
+      const profile=user ? USERS[user.email||''] : null;
 
-      useEffect(()=>auth.onAuthStateChanged(currentUser=>{
-        setUser(currentUser);
-        setAuthReady(true);
-        if(!currentUser){
-          setStatus('Se autentifică automat…');
-          auth.signInAnonymously().catch(err=>{
-            console.error('Firebase anonymous sign-in failed',err);
-            setError('Autentificarea fără e-mail nu a reușit. Activează Anonymous în Firebase Authentication.');
-            setStatus('Autentificare indisponibilă');
-          });
+      useEffect(()=>auth.onAuthStateChanged(async currentUser=>{
+        if(currentUser?.isAnonymous){
+          await auth.signOut();
+          setUser(null);
+        } else {
+          setUser(currentUser);
         }
+        setAuthReady(true);
       }),[]);
 
       useEffect(()=>{
-        if(!user)return;
+        if(!user || !profile){setEvents([]);setLogs([]);return;}
         setStatus('Se sincronizează cu Firebase…');
         const stopEvents=eventsCollection.orderBy('date','desc').onSnapshot(async snapshot=>{
-          if(snapshot.empty && !seedStarted.current){
+          if(snapshot.empty && !seedStarted.current && profile.canEdit){
             seedStarted.current=true;
             const batch=db.batch();
             INITIAL_EVENTS.forEach(({id,...data})=>batch.set(eventsCollection.doc(id),data));
-            try{await batch.commit();}catch(err){console.error(err);setError('Nu s-au putut inițializa datele. Verifică regulile Firestore.');}
+            try{await batch.commit();}catch(err){console.error('Seed error',err);setError('Nu s-au putut inițializa datele. Verifică regulile Firestore.');}
           } else {
             setEvents(snapshot.docs.map(doc=>({id:doc.id,...doc.data()})));
           }
           setStatus('Online · sincronizare în timp real');
         },err=>{
           console.error(err);setStatus('Eroare de sincronizare');
-          setError('Nu pot accesa evenimentele. Verifică Firestore și regulile de acces. '+err.message);
+          setError('Accesul la evenimente a eșuat. Verifică regulile Firestore. '+err.message);
         });
         const stopLogs=auditCollection.orderBy('createdAt','desc').limit(200).onSnapshot(snapshot=>setLogs(snapshot.docs.map(doc=>({id:doc.id,...doc.data()}))),err=>console.error('Audit sync error',err));
         return ()=>{stopEvents();stopLogs();};
-      },[user]);
+      },[user,profile?.role,profile?.canEdit]);
 
-      const record=(action,ref,details)=>auditCollection.add({action,ref,details,user:'Utilizator',uid:user?.uid||'',createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+      const signIn=async e=>{
+        e.preventDefault();setError('');
+        const username=e.currentTarget.username.value.trim().toLowerCase().replace(/@hotelmandachi\.com$/i,'');
+        if(!/^[a-z0-9._-]+$/.test(username)){setError('Introdu un nume de utilizator valid.');return;}
+        const email=username+EMAIL_DOMAIN;
+        if(!USERS[email]){setError('Acest utilizator nu are acces la aplicație.');return;}
+        try{await auth.signInWithEmailAndPassword(email,e.currentTarget.password.value);}
+        catch(err){console.error(err);setError('Autentificare nereușită. Verifică numele de utilizator și parola.');}
+      };
+      const signOut=()=>auth.signOut();
+      const record=(action,ref,details)=>auditCollection.add({action,ref,details,user:profile.name,role:profile.role,uid:user.uid,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
       const save=async data=>{
+        if(!profile?.canEdit){setError('Contul tău are doar drept de vizualizare.');return;}
         try{
           const {id,...fields}=data;
           if(id){await eventsCollection.doc(id).set(fields,{merge:true});await record('EDIT',data.contractNo,'Contract actualizat');}
@@ -99,31 +115,42 @@
         }catch(err){console.error(err);setError('Salvarea online a eșuat. Verifică regulile Firestore. '+err.message);}
       };
       const remove=async event=>{
+        if(!profile?.canEdit){setError('Contul tău nu poate șterge evenimente.');return;}
         if(!window.confirm(`Ștergi contractul ${event.contractNo}?`))return;
         try{await eventsCollection.doc(event.id).delete();await record('DELETE',event.contractNo,'Eveniment șters.');}
         catch(err){setError('Ștergerea a eșuat. Verifică regulile Firestore. '+err.message);}
       };
+      const clearLogs=async()=>{
+        if(!profile?.isAdmin || !window.confirm('Ștergi istoricul de audit?'))return;
+        try{const snapshot=await auditCollection.limit(400).get();const batch=db.batch();snapshot.docs.forEach(doc=>batch.delete(doc.ref));await batch.commit();}
+        catch(err){setError('Nu s-a putut șterge istoricul. '+err.message);}
+      };
       const totals=useMemo(()=>events.reduce((a,e)=>{const m=metrics(e);a.gross+=m.gross;a.costs+=m.costs;a.profit+=m.profit;return a;},{gross:0,costs:0,profit:0}),[events]);
 
-      if(!authReady||!user)return <div className="min-h-screen flex items-center justify-center p-5"><div className="panel w-full max-w-md rounded-2xl p-8 text-center shadow-2xl"><img src="mandachi-logo.svg" alt="Mandachi Hotel & Spa" className="mx-auto mb-6 w-48"/><div className="mx-auto mb-4 h-9 w-9 animate-spin rounded-full border-4 border-amber-400 border-t-transparent"></div><p className="text-sm text-slate-300">{status}</p>{error&&<p role="alert" className="mt-4 text-sm text-rose-300">{error}</p>}</div></div>;
+      if(!authReady||!user)return <LoginScreen onSubmit={signIn} error={error} status={status}/>;
+      if(!profile)return <div className="min-h-screen flex items-center justify-center p-5"><div className="panel max-w-md rounded-xl p-6 text-center"><p className="mb-4">Acest cont nu este autorizat pentru aplicație.</p><button onClick={signOut} className="rounded bg-slate-700 px-4 py-2">Ieșire</button></div></div>;
 
       return <div className="min-h-screen">
-        <header className="panel sticky top-0 z-10"><div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3"><div className="flex items-center gap-4"><img src="mandachi-logo.svg" alt="Mandachi Hotel & Spa" className="h-12 w-auto"/><span className="hidden text-xs text-slate-400 sm:inline">Gestiune evenimente</span></div><div className="text-right text-xs text-slate-400">Utilizator simplu · fără e-mail</div></div></header>
+        <header className="panel sticky top-0 z-10"><div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3"><div className="flex items-center gap-4"><img src="mandachi-logo.svg" alt="Mandachi Hotel & Spa" className="h-12 w-auto"/><span className="hidden text-xs text-slate-400 sm:inline">Gestiune evenimente</span></div><div className="flex items-center gap-3"><span className="text-right text-xs"><b className="block">{profile.name}</b><span className="text-slate-400">{profile.role}</span></span><button onClick={signOut} className="rounded-lg bg-slate-800 px-3 py-2 text-sm">Deconectare</button></div></div></header>
         <main className="mx-auto max-w-7xl space-y-5 p-4 sm:p-6">
-          <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2">{[['events','Evenimente'],['dashboard','Dashboard'],['audit','Istoric']].map(([id,label])=><button key={id} onClick={()=>setTab(id)} className={`rounded-lg px-4 py-2 text-sm ${tab===id?'bg-amber-400 font-bold text-slate-950':'bg-slate-800 text-slate-300'}`}>{label}</button>)}</div>{tab==='events'&&<button onClick={()=>setModal({})} className="rounded-lg bg-amber-400 px-4 py-2 font-bold text-slate-950">+ Adaugă eveniment</button>}</div>
+          <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2">{[['events','Evenimente'],['dashboard','Dashboard'],['audit','Istoric']].map(([id,label])=><button key={id} onClick={()=>setTab(id)} className={`rounded-lg px-4 py-2 text-sm ${tab===id?'bg-amber-400 font-bold text-slate-950':'bg-slate-800 text-slate-300'}`}>{label}</button>)}</div>{tab==='events'&&profile.canEdit&&<button onClick={()=>setModal({})} className="rounded-lg bg-amber-400 px-4 py-2 font-bold text-slate-950">+ Adaugă eveniment</button>}</div>
           <p className="text-xs text-emerald-400">● {status}</p>{error&&<div role="alert" className="rounded-lg border border-rose-800 bg-rose-950/50 p-3 text-sm text-rose-300">{error}</div>}
           {tab==='dashboard'&&<div className="grid gap-4 sm:grid-cols-3">{[['Venit brut',totals.gross],['Costuri',totals.costs],['Profit net',totals.profit]].map(([label,value])=><div key={label} className="panel rounded-xl p-5"><p className="text-sm text-slate-400">{label}</p><p className="mt-2 text-2xl font-bold">{money(value)}</p></div>)}</div>}
-          {tab==='events'&&<div className="panel overflow-x-auto rounded-xl"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-900 text-slate-400"><tr>{['Contract / Client','Dată / Sală','Invitați','Venit brut','Costuri','Profit net','Acțiuni'].map(x=><th key={x} className="p-3">{x}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{events.map(event=>{const m=metrics(event);return <tr key={event.id}><td className="p-3"><b className="text-amber-300">{event.contractNo}</b><div>{event.clientName}</div></td><td className="p-3">{event.date}<div className="text-slate-400">{event.hall}</div></td><td className="p-3">{(+event.adultGuests||0)+(+event.kidGuests||0)}</td><td className="p-3">{money(m.gross)}</td><td className="p-3 text-rose-300">{money(m.costs)}</td><td className="p-3 text-emerald-300">{money(m.profit)}</td><td className="whitespace-nowrap p-3"><button onClick={()=>setModal(event)} className="mr-2 text-amber-300">Editează</button><button onClick={()=>remove(event)} className="text-rose-300">Șterge</button></td></tr>})}</tbody></table>{events.length===0&&<p className="p-6 text-slate-400">Nu există evenimente.</p>}</div>}
-          {tab==='audit'&&<div className="space-y-3">{logs.map(log=><div key={log.id} className="panel flex flex-wrap justify-between gap-2 rounded-lg p-4"><div><b className="text-amber-300">{log.action} · {log.ref}</b><p className="text-sm text-slate-400">{log.details}</p></div><span className="text-xs text-slate-500">Utilizator</span></div>)}{logs.length===0&&<p className="text-slate-400">Istoricul se va afișa aici.</p>}</div>}
+          {tab==='events'&&<div className="panel overflow-x-auto rounded-xl"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-900 text-slate-400"><tr>{['Contract / Client','Dată / Sală','Invitați','Venit brut','Costuri','Profit net',...(profile.canEdit?['Acțiuni']:[])].map(x=><th key={x} className="p-3">{x}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{events.map(event=>{const m=metrics(event);return <tr key={event.id}><td className="p-3"><b className="text-amber-300">{event.contractNo}</b><div>{event.clientName}</div></td><td className="p-3">{event.date}<div className="text-slate-400">{event.hall}</div></td><td className="p-3">{(+event.adultGuests||0)+(+event.kidGuests||0)}</td><td className="p-3">{money(m.gross)}</td><td className="p-3 text-rose-300">{money(m.costs)}</td><td className="p-3 text-emerald-300">{money(m.profit)}</td>{profile.canEdit&&<td className="whitespace-nowrap p-3"><button onClick={()=>setModal(event)} className="mr-2 text-amber-300">Editează</button><button onClick={()=>remove(event)} className="text-rose-300">Șterge</button></td>}</tr>})}</tbody></table>{events.length===0&&<p className="p-6 text-slate-400">Nu există evenimente.</p>}</div>}
+          {tab==='audit'&&<div className="space-y-3">{profile.isAdmin&&logs.length>0&&<button onClick={clearLogs} className="rounded bg-rose-900 px-3 py-2 text-sm text-rose-200">Șterge istoricul</button>}{logs.map(log=><div key={log.id} className="panel flex flex-wrap justify-between gap-2 rounded-lg p-4"><div><b className="text-amber-300">{log.action} · {log.ref}</b><p className="text-sm text-slate-400">{log.details}</p></div><span className="text-xs text-slate-500">{log.user}</span></div>)}{logs.length===0&&<p className="text-slate-400">Istoricul se va afișa aici.</p>}</div>}
         </main>
-        {modal&&<EventForm initial={modal} close={()=>setModal(null)} save={save}/>}
+        {modal&&profile.canEdit&&<EventForm initial={modal} close={()=>setModal(null)} save={save}/>}
       </div>;
+    }
+
+    function LoginScreen({onSubmit,error,status}){
+      return <div className="min-h-screen flex items-center justify-center p-4"><form onSubmit={onSubmit} className="panel w-full max-w-md space-y-5 rounded-2xl p-7 shadow-2xl"><img src="mandachi-logo.svg" alt="Mandachi Hotel & Spa" className="mx-auto w-48"/><h1 className="text-center text-xl font-bold">Autentificare</h1><p className="text-center text-xs text-slate-400">Introdu numele de utilizator și parola contului tău.</p><label className="block text-sm text-slate-300">Utilizator<input name="username" required autoComplete="username" placeholder="ex. daniel" className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-3"/></label><label className="block text-sm text-slate-300">Parolă<input name="password" required type="password" autoComplete="current-password" className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-3"/></label>{error&&<p role="alert" className="text-sm text-rose-300">{error}</p>}<button className="w-full rounded-lg bg-amber-400 py-3 font-bold text-slate-950">Intră în aplicație</button><p className="text-center text-xs text-slate-500">{status}</p></form></div>;
     }
 
     function EventForm({initial,close,save}){
       const fields=[['contractNo','Contract'],['clientName','Client'],['date','Dată','date'],['hall','Sală'],['adultGuests','Adulți','number'],['adultPrice','Preț meniu adult','number'],['kidGuests','Copii','number'],['kidPrice','Preț meniu copil','number'],['advancePaid','Avans','number'],['foodCost','Cost mâncare','number'],['staffCost','Cost personal','number'],['otherCost','Alte costuri','number']];
       const [form,setForm]=useState({contractNo:'CTR-',clientName:'',date:'',hall:'Magnifique',adultGuests:0,adultPrice:0,kidGuests:0,kidPrice:0,advancePaid:0,foodCost:0,staffCost:0,otherCost:0,...initial});
-      return <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/80 p-4"><form onSubmit={e=>{e.preventDefault();save(form)}} className="panel max-h-[90vh] w-full max-w-2xl space-y-4 overflow-y-auto rounded-2xl p-6"><div className="flex justify-between"><h2 className="text-lg font-bold">{initial.id?'Editează eveniment':'Eveniment nou'}</h2><button type="button" onClick={close}>✕</button></div><div className="grid gap-4 sm:grid-cols-2">{fields.map(([name,label,type='text'])=><label key={name} className="text-xs text-slate-400">{label}<input required={['contractNo','clientName','date','hall'].includes(name)} type={type} value={form[name]??''} onChange={e=>setForm({...form,[name]:type==='number'?Number(e.target.value):e.target.value})} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-white"/></label>)}</div><div className="flex justify-end gap-3"><button type="button" onClick={close} className="rounded-lg bg-slate-700 px-4 py-2">Anulează</button><button className="rounded-lg bg-amber-400 px-5 py-2 font-bold text-slate-950">Salvează online</button></div></form></div>;
+      return <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/80 p-4"><form onSubmit={e=>{e.preventDefault();save(form)}} className="panel max-h-[90vh] w-full max-w-2xl space-y-4 overflow-y-auto rounded-2xl p-6"><div className="flex justify-between"><h2 className="text-lg font-bold">{initial.id?'Editează eveniment':'Eveniment nou'}</h2><button type="button" onClick={close}>✕</button></div><div className="grid gap-4 sm:grid-cols-2">{fields.map(([name,label,type='text'])=><label key={name} className="text-xs text-slate-400">{label}<input required={['contractNo','clientName','date','hall'].includes(name)} type={type} value={form[name]??''} onChange={e=>setForm({...form,[name]:type==='number'?Number(e.target.value):e.target.value})} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-white"/></label>)}</div><div className="flex justify-end gap-3"><button type="button" onClick={close} className="rounded-lg bg-slate-700 px-4 py-2">Anulează</button><button className="rounded-lg bg-amber-400 px-5 py-2 font-bold text-slate-950">Salvează</button></div></form></div>;
     }
     ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
   </script>

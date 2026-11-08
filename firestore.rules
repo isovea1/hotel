@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function isDanielAdmin() {
+      return signedIn() && request.auth.token.email == 'daniel@hotelmandachi.com';
+    }
+    function isEditor() {
+      return signedIn() && request.auth.token.email in [
+        'daniel@hotelmandachi.com',
+        'anca@hotelmandachi.com',
+        'nicoleta@hotelmandachi.com'
+      ];
+    }
+    function isApprovedUser() {
+      return isEditor() || (signedIn() && request.auth.token.email == 'anisoara@hotelmandachi.com');
+    }
+
+    match /events/{eventId} {
+      allow read: if isApprovedUser();
+      allow create, update, delete: if isEditor();
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isApprovedUser();
+      allow create: if isEditor()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.user == request.auth.token.name;
+      allow update, delete: if isDanielAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
