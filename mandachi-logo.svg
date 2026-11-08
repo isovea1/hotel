@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 553 556" role="img" aria-labelledby="title">
+  <title id="title">Mandachi Hotel &amp; Spa</title>
+  <g fill="#efc66c">
+    <path d="M119 35 264 143 168 107 198 251 162 230Z"/>
+    <path d="M212 190 483 0 450 63Z"/>
+    <path d="m224 199 211-110-29 40Z"/>
+    <path d="m233 201 167-58-16 29Z"/>
+    <path d="M0 323h3l24 33 24-33h3v48h-6v-36l-21 29-21-29v36H0z"/>
+    <path d="M88 371 107 323h2l21 48h-7l-5-13H99l-5 13zm13-19h15l-8-18z"/>
+    <path d="M164 371v-48h2l32 35v-35h6v48h-2l-32-35v35z"/>
+    <path d="M243 323h13c15 0 25 9 25 24s-10 24-25 24h-13zm6 6v36h7c12 0 19-7 19-18s-7-18-19-18z"/>
+    <path d="m314 371 19-48h2l21 48h-7l-5-13h-19l-5 13zm13-19h15l-8-18z"/>
+    <path d="M426 330c-11 0-19 8-19 19s8 19 19 19c6 0 11-2 15-7l4 4c-5 5-11 8-19 8-15 0-25-10-25-24s10-24 25-24c8 0 14 3 19 8l-4 4c-4-5-9-7-15-7z"/>
+    <path d="M464 323h6v20h27v-20h6v48h-6v-22h-27v22h-6z"/>
+    <path d="M546 323h7v48h-7z"/>
+  </g>
+  <text x="276" y="457" text-anchor="middle" fill="#efc66c" font-family="Arial, sans-serif" font-size="40" letter-spacing="3">HOTEL &amp; SPA</text>
+  <g fill="#efc66c">
+    <path d="m196 518 6 13 14 1-11 9 4 14-13-8-12 8 3-14-10-9 14-1z"/>
+    <path d="m250 518 6 13 14 1-11 9 4 14-13-8-12 8 3-14-10-9 14-1z"/>
+    <path d="m303 518 6 13 14 1-11 9 4 14-13-8-12 8 3-14-10-9 14-1z"/>
+    <path d="m356 518 6 13 14 1-11 9 4 14-13-8-12 8 3-14-10-9 14-1z"/>
+  </g>
+</svg>
