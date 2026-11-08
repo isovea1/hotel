@@ -7,7 +7,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -23,6 +23,7 @@
     const firebaseConfig = {
       apiKey: "AIzaSyD2K9qbzcw6MnOn1uWSzTqZqm2PM2rJE84",
       authDomain: "hotel-c2a10.firebaseapp.com",
+      databaseURL: "https://hotel-c2a10-default-rtdb.europe-west1.firebasedatabase.app",
       projectId: "hotel-c2a10",
       storageBucket: "hotel-c2a10.firebasestorage.app",
       messagingSenderId: "748575537987",
@@ -31,9 +32,9 @@
     };
     firebase.initializeApp(firebaseConfig);
     const auth = firebase.auth();
-    const db = firebase.firestore();
-    const eventsCollection = db.collection('events');
-    const auditCollection = db.collection('auditLogs');
+    const db = firebase.database();
+    const eventsRef = db.ref('events');
+    const auditRef = db.ref('auditLogs');
   </script>
   <script type="text/babel">
     const {useEffect, useMemo, useRef, useState} = React;
@@ -61,37 +62,39 @@
       const [status,setStatus]=useState('Autentifică-te pentru a continua.'), [error,setError]=useState('');
       const [tab,setTab]=useState('events'), [modal,setModal]=useState(null);
       const seedStarted=useRef(false);
-      const profile=user ? USERS[user.email||''] : null;
+      const profile=user ? USERS[(user.email||'').toLowerCase()] : null;
 
-      useEffect(()=>auth.onAuthStateChanged(async currentUser=>{
-        if(currentUser?.isAnonymous){
-          await auth.signOut();
-          setUser(null);
-        } else {
-          setUser(currentUser);
-        }
+      useEffect(()=>auth.onAuthStateChanged(currentUser=>{
+        setUser(currentUser?.isAnonymous ? null : currentUser);
         setAuthReady(true);
       }),[]);
 
       useEffect(()=>{
         if(!user || !profile){setEvents([]);setLogs([]);return;}
-        setStatus('Se sincronizează cu Firebase…');
-        const stopEvents=eventsCollection.orderBy('date','desc').onSnapshot(async snapshot=>{
-          if(snapshot.empty && !seedStarted.current && profile.canEdit){
+        setStatus('Se sincronizează cu baza de date…');
+        const onEvents=snapshot=>{
+          const data=snapshot.val();
+          if(data){
+            setEvents(Object.entries(data).map(([id,event])=>({id,...event})).sort((a,b)=>(a.date||'').localeCompare(b.date||'')));
+            setStatus('Online · sincronizare în timp real');
+          } else if(!seedStarted.current && profile.canEdit){
             seedStarted.current=true;
-            const batch=db.batch();
-            INITIAL_EVENTS.forEach(({id,...data})=>batch.set(eventsCollection.doc(id),data));
-            try{await batch.commit();}catch(err){console.error('Seed error',err);setError('Nu s-au putut inițializa datele. Verifică regulile Firestore.');}
+            const seed={};
+            INITIAL_EVENTS.forEach(({id,...event})=>{seed[id]=event;});
+            eventsRef.update(seed).catch(err=>{console.error(err);setError('Nu s-au putut inițializa evenimentele. Verifică regulile Realtime Database.');});
           } else {
-            setEvents(snapshot.docs.map(doc=>({id:doc.id,...doc.data()})));
+            setEvents([]);setStatus('Online · nu există evenimente încă');
           }
-          setStatus('Online · sincronizare în timp real');
-        },err=>{
-          console.error(err);setStatus('Eroare de sincronizare');
-          setError('Accesul la evenimente a eșuat. Verifică regulile Firestore. '+err.message);
-        });
-        const stopLogs=auditCollection.orderBy('createdAt','desc').limit(200).onSnapshot(snapshot=>setLogs(snapshot.docs.map(doc=>({id:doc.id,...doc.data()}))),err=>console.error('Audit sync error',err));
-        return ()=>{stopEvents();stopLogs();};
+        };
+        const onEventsError=err=>{console.error(err);setStatus('Eroare de sincronizare');setError('Accesul la evenimente a eșuat. Verifică regulile Realtime Database. '+err.message);};
+        const onLogs=snapshot=>{
+          const data=snapshot.val()||{};
+          setLogs(Object.entries(data).map(([id,log])=>({id,...log})).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).slice(0,200));
+        };
+        const onLogsError=err=>{console.error(err);setError('Nu pot citi istoricul din Realtime Database. '+err.message);};
+        eventsRef.on('value',onEvents,onEventsError);
+        auditRef.on('value',onLogs,onLogsError);
+        return ()=>{eventsRef.off('value',onEvents);auditRef.off('value',onLogs);};
       },[user,profile?.role,profile?.canEdit]);
 
       const signIn=async e=>{
@@ -101,28 +104,28 @@
         const email=username+EMAIL_DOMAIN;
         if(!USERS[email]){setError('Acest utilizator nu are acces la aplicație.');return;}
         try{await auth.signInWithEmailAndPassword(email,e.currentTarget.password.value);}
-        catch(err){console.error(err);setError('Autentificare nereușită. Verifică numele de utilizator și parola.');}
+        catch(err){console.error(err);setError('Autentificare nereușită. Verifică numele de utilizator și parola Firebase.');}
       };
       const signOut=()=>auth.signOut();
-      const record=(action,ref,details)=>auditCollection.add({action,ref,details,user:profile.name,role:profile.role,uid:user.uid,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+      const record=(action,ref,details)=>auditRef.push({action,ref,details,user:profile.name,role:profile.role,uid:user.uid,createdAt:firebase.database.ServerValue.TIMESTAMP});
       const save=async data=>{
         if(!profile?.canEdit){setError('Contul tău are doar drept de vizualizare.');return;}
         try{
           const {id,...fields}=data;
-          if(id){await eventsCollection.doc(id).set(fields,{merge:true});await record('EDIT',data.contractNo,'Contract actualizat');}
-          else {await eventsCollection.add(fields);await record('ADD',data.contractNo,`Creat eveniment pentru ${data.clientName}`);}
+          if(id){await eventsRef.child(id).update(fields);await record('EDIT',data.contractNo,'Contract actualizat');}
+          else {const newEventRef=eventsRef.push();await newEventRef.set(fields);await record('ADD',data.contractNo,`Creat eveniment pentru ${data.clientName}`);}
           setModal(null);setError('');
-        }catch(err){console.error(err);setError('Salvarea online a eșuat. Verifică regulile Firestore. '+err.message);}
+        }catch(err){console.error(err);setError('Salvarea online a eșuat. Verifică regulile Realtime Database. '+err.message);}
       };
       const remove=async event=>{
         if(!profile?.canEdit){setError('Contul tău nu poate șterge evenimente.');return;}
         if(!window.confirm(`Ștergi contractul ${event.contractNo}?`))return;
-        try{await eventsCollection.doc(event.id).delete();await record('DELETE',event.contractNo,'Eveniment șters.');}
-        catch(err){setError('Ștergerea a eșuat. Verifică regulile Firestore. '+err.message);}
+        try{await eventsRef.child(event.id).remove();await record('DELETE',event.contractNo,'Eveniment șters.');}
+        catch(err){setError('Ștergerea a eșuat. Verifică regulile Realtime Database. '+err.message);}
       };
       const clearLogs=async()=>{
         if(!profile?.isAdmin || !window.confirm('Ștergi istoricul de audit?'))return;
-        try{const snapshot=await auditCollection.limit(400).get();const batch=db.batch();snapshot.docs.forEach(doc=>batch.delete(doc.ref));await batch.commit();}
+        try{await auditRef.remove();}
         catch(err){setError('Nu s-a putut șterge istoricul. '+err.message);}
       };
       const totals=useMemo(()=>events.reduce((a,e)=>{const m=metrics(e);a.gross+=m.gross;a.costs+=m.costs;a.profit+=m.profit;return a;},{gross:0,costs:0,profit:0}),[events]);

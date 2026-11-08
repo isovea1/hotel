@@ -1,0 +1,16 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "events": {
+      ".read": "auth != null && auth.token.email in ['daniel@hotelmandachi.com', 'anca@hotelmandachi.com', 'nicoleta@hotelmandachi.com', 'anisoara@hotelmandachi.com']",
+      ".write": "auth != null && auth.token.email in ['daniel@hotelmandachi.com', 'anca@hotelmandachi.com', 'nicoleta@hotelmandachi.com']"
+    },
+    "auditLogs": {
+      ".read": "auth != null && auth.token.email in ['daniel@hotelmandachi.com', 'anca@hotelmandachi.com', 'nicoleta@hotelmandachi.com', 'anisoara@hotelmandachi.com']",
+      "$logId": {
+        ".write": "auth != null && ((auth.token.email == 'daniel@hotelmandachi.com') || (!data.exists() && newData.child('uid').val() == auth.uid && auth.token.email in ['anca@hotelmandachi.com', 'nicoleta@hotelmandachi.com', 'daniel@hotelmandachi.com']))"
+      }
+    }
+  }
+}
