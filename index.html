@@ -18,7 +18,11 @@
     .panel { background: rgba(15,23,42,.92); border: 1px solid rgba(148,163,184,.16); }
     input { color-scheme: dark; }
     button { touch-action: manipulation; }
-    .events-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    /* Keep the complete spreadsheet-style table available on narrow screens via horizontal swipe. */
+    .events-table-wrap { width: 100%; overflow-x: auto; overflow-y: visible; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+    .events-table { min-width: 1550px; border-collapse: separate; border-spacing: 0; }
+    .events-table th { position: sticky; top: 0; z-index: 1; }
+    .mobile-table-hint { display: none; }
     @media (max-width: 640px) {
       .app-header-inner { padding: .65rem .8rem !important; gap: .5rem; }
       .brand-logo { height: 2.5rem !important; max-width: 44vw; }
@@ -28,24 +32,7 @@
       .app-tabs { display: grid !important; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .35rem !important; width: 100%; }
       .app-tabs button { justify-content: center; padding: .65rem .35rem !important; font-size: .75rem !important; line-height: 1.15; }
       .app-tabs button span { overflow: hidden; text-overflow: ellipsis; }
-      .events-table-wrap { overflow: visible; }
-      .events-table-wrap table { min-width: 0 !important; width: 100%; }
-      .events-table-wrap thead { display: none; }
-      .events-table-wrap tbody, .events-table-wrap tr, .events-table-wrap td { display: block; width: 100%; }
-      .events-table-wrap tr { margin: .65rem; width: calc(100% - 1.3rem); overflow: hidden; border: 1px solid rgba(148,163,184,.18); border-radius: .8rem; background: rgba(2,6,23,.55); }
-      .events-table-wrap td { display: grid; grid-template-columns: minmax(6.5rem, 37%) minmax(0,1fr); align-items: start; gap: .45rem; padding: .65rem .75rem !important; white-space: normal !important; text-align: left !important; border-bottom: 1px solid rgba(148,163,184,.1); }
-      .events-table-wrap td:last-child { border-bottom: 0; }
-      .events-table-wrap td::before { color: #94a3b8; font-size: .7rem; font-weight: 700; line-height: 1.4; }
-      .events-table-wrap td:nth-child(1)::before { content: 'Contract / Client'; }
-      .events-table-wrap td:nth-child(2)::before { content: 'Dată / Sală'; }
-      .events-table-wrap td:nth-child(3)::before { content: 'Invitați'; }
-      .events-table-wrap td:nth-child(4)::before { content: 'Venit brut'; }
-      .events-table-wrap td:nth-child(5)::before { content: 'Costuri'; }
-      .events-table-wrap td:nth-child(6)::before { content: 'Profit net'; }
-      .events-table-wrap td:nth-child(7)::before { content: 'Acțiuni'; }
-      .events-table-wrap td:nth-child(1) > div, .events-table-wrap td:nth-child(2) > div { min-width: 0; }
-      .events-table-wrap td:nth-child(7) { grid-template-columns: 1fr; }
-      .events-table-wrap td:nth-child(7)::before { display: none; }
+      .mobile-table-hint { display: block; }
       .login-card { padding: 1.25rem !important; }
       .event-modal-backdrop { align-items: end !important; padding: 0 !important; }
       .event-modal { width: 100% !important; max-width: none !important; max-height: 94dvh !important; border-radius: 1.1rem 1.1rem 0 0 !important; padding: 1rem !important; padding-bottom: max(1rem,env(safe-area-inset-bottom)) !important; }
@@ -120,7 +107,7 @@
           <div className="flex flex-wrap items-center justify-between gap-3"><div className="app-tabs flex gap-2">{[['events','Evenimente'],['dashboard','Dashboard'],['audit','Istoric']].map(([id,label])=><button key={id} onClick={()=>setTab(id)} className={`flex items-center rounded-lg px-4 py-2 text-sm ${tab===id?'bg-amber-400 font-bold text-slate-950':'bg-slate-800 text-slate-300'}`}><span>{label}</span></button>)}</div>{tab==='events'&&profile.canEdit&&<button onClick={()=>setModal({})} className="min-h-11 rounded-lg bg-amber-400 px-4 py-2 font-bold text-slate-950">+ Adaugă eveniment</button>}</div>
           <p className="text-xs text-emerald-400">● {status}</p>{error&&<div role="alert" className="break-words rounded-lg border border-rose-800 bg-rose-950/50 p-3 text-sm text-rose-300">{error}</div>}
           {tab==='dashboard'&&<div className="grid grid-cols-1 gap-4 sm:grid-cols-3">{[['Venit brut',totals.gross],['Costuri',totals.costs],['Profit net',totals.profit]].map(([label,value])=><div key={label} className="panel rounded-xl p-5"><p className="text-sm text-slate-400">{label}</p><p className="mt-2 text-2xl font-bold">{money(value)}</p></div>)}</div>}
-          {tab==='events'&&<div className="events-table-wrap panel rounded-xl"><table className="w-full min-w-[1600px] text-left text-xs sm:text-sm"><thead className="bg-slate-900 text-slate-400"><tr>{['Contract / Client','Dată','Sală','Adulți','Preț adult','Copii','Preț copil','Avans','Cost mâncare','Cost personal','Alte costuri','Cost total','Profit net',...(profile.canEdit?['Acțiuni']:[])].map(x=><th key={x} className="p-2.5 whitespace-nowrap">{x}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{events.map(event=>{const m=metrics(event);const totalCost = (Number(event.foodCost)||0)+(Number(event.staffCost)||0)+(Number(event.otherCost)||0);return <tr key={event.id}><td className="p-2.5"><b className="text-amber-300">{event.contractNo}</b><div>{event.clientName}</div></td><td className="p-2.5 whitespace-nowrap">{event.date}</td><td className="p-2.5 whitespace-nowrap">{event.hall}</td><td className="p-2.5 whitespace-nowrap">{event.adultGuests ?? 0}</td><td className="p-2.5 whitespace-nowrap">{money(event.adultPrice)}</td><td className="p-2.5 whitespace-nowrap">{event.kidGuests ?? 0}</td><td className="p-2.5 whitespace-nowrap">{money(event.kidPrice)}</td><td className="p-2.5 whitespace-nowrap">{money(event.advancePaid)}</td><td className="p-2.5 whitespace-nowrap">{money(event.foodCost)}</td><td className="p-2.5 whitespace-nowrap">{money(event.staffCost)}</td><td className="p-2.5 whitespace-nowrap">{money(event.otherCost)}</td><td className="p-2.5 whitespace-nowrap text-rose-300">{money(totalCost)}</td><td className="p-2.5 whitespace-nowrap text-emerald-300">{money(m.profit)}</td>{profile.canEdit&&<td className="whitespace-nowrap p-2.5"><div className="flex flex-wrap gap-3"><button onClick={()=>setModal(event)} className="min-h-10 text-amber-300">Editează</button><button onClick={()=>remove(event)} className="min-h-10 text-rose-300">Șterge</button></div></td>}</tr>})}</tbody></table>{events.length===0&&<p className="p-6 text-slate-400">Nu există evenimente.</p>}</div>}
+          {tab==='events'&&<><p className="mobile-table-hint text-xs text-amber-300">Pe telefon, glisează tabelul lateral pentru a vedea toate coloanele →</p><div className="events-table-wrap panel rounded-xl"><table className="events-table w-full text-left text-xs sm:text-sm"><thead className="bg-slate-900 text-slate-400"><tr>{['Contract / Client','Dată','Sală','Adulți','Preț adult','Copii','Preț copil','Avans','Cost mâncare','Cost personal','Alte costuri','Cost total','Profit net',...(profile.canEdit?['Acțiuni']:[])].map(x=><th key={x} className="p-2.5 whitespace-nowrap">{x}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{events.map(event=>{const m=metrics(event);const totalCost=(Number(event.foodCost)||0)+(Number(event.staffCost)||0)+(Number(event.otherCost)||0);return <tr key={event.id}><td className="p-2.5"><b className="text-amber-300">{event.contractNo}</b><div>{event.clientName}</div></td><td className="p-2.5 whitespace-nowrap">{event.date}</td><td className="p-2.5 whitespace-nowrap">{event.hall}</td><td className="p-2.5 whitespace-nowrap">{event.adultGuests??0}</td><td className="p-2.5 whitespace-nowrap">{money(event.adultPrice)}</td><td className="p-2.5 whitespace-nowrap">{event.kidGuests??0}</td><td className="p-2.5 whitespace-nowrap">{money(event.kidPrice)}</td><td className="p-2.5 whitespace-nowrap">{money(event.advancePaid)}</td><td className="p-2.5 whitespace-nowrap">{money(event.foodCost)}</td><td className="p-2.5 whitespace-nowrap">{money(event.staffCost)}</td><td className="p-2.5 whitespace-nowrap">{money(event.otherCost)}</td><td className="p-2.5 whitespace-nowrap text-rose-300">{money(totalCost)}</td><td className="p-2.5 whitespace-nowrap text-emerald-300">{money(m.profit)}</td>{profile.canEdit&&<td className="whitespace-nowrap p-2.5"><div className="flex flex-wrap gap-3"><button onClick={()=>setModal(event)} className="min-h-10 text-amber-300">Editează</button><button onClick={()=>remove(event)} className="min-h-10 text-rose-300">Șterge</button></div></td>}</tr>})}</tbody></table>{events.length===0&&<p className="p-6 text-slate-400">Nu există evenimente.</p>}</div></>}
           {tab==='audit'&&<div className="space-y-3">{profile.isAdmin&&logs.length>0&&<button onClick={clearLogs} className="min-h-10 rounded bg-rose-900 px-3 py-2 text-sm text-rose-200">Șterge istoricul</button>}{logs.map(log=><div key={log.id} className="panel flex flex-wrap justify-between gap-2 rounded-lg p-4"><div><b className="text-amber-300">{log.action} · {log.ref}</b><p className="text-sm text-slate-400">{log.details}</p></div><span className="text-xs text-slate-500">{log.user}</span></div>)}{logs.length===0&&<p className="text-slate-400">Istoricul se va afișa aici.</p>}</div>}
         </main>
         {modal&&profile.canEdit&&<EventForm initial={modal} close={()=>setModal(null)} save={save}/>}
