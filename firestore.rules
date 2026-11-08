@@ -26,8 +26,7 @@ service cloud.firestore {
     match /auditLogs/{logId} {
       allow read: if isApprovedUser();
       allow create: if isEditor()
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.user == request.auth.token.name;
+        && request.resource.data.uid == request.auth.uid;
       allow update, delete: if isDanielAdmin();
     }
 
