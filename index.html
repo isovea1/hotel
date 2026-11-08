@@ -20,7 +20,6 @@
 <body>
   <div id="root"></div>
   <script>
-    // Firebase web config identifies the project; database access is controlled by Firestore Rules.
     const firebaseConfig = {
       apiKey: "AIzaSyD2K9qbzcw6MnOn1uWSzTqZqm2PM2rJE84",
       authDomain: "hotel-c2a10.firebaseapp.com",
@@ -37,83 +36,94 @@
     const auditCollection = db.collection('auditLogs');
   </script>
   <script type="text/babel">
-    const {useEffect, useMemo, useState} = React;
+    const {useEffect, useMemo, useRef, useState} = React;
     const INITIAL_EVENTS = [
-      {id:'1', contractNo:'CTR-101', clientName:'Ion & Maria', date:'2026-05-15', type:'Nuntă', hall:'Magnifique', adultGuests:150, kidGuests:10, adultPrice:400, kidPrice:200, advancePaid:20000, foodCost:25000, staffCost:8000, otherCost:5000},
-      {id:'2', contractNo:'CTR-102', clientName:'Firma IT SRL', date:'2026-06-20', type:'Corporate', hall:'Cristal', adultGuests:300, kidGuests:0, adultPrice:350, kidPrice:0, advancePaid:30000, foodCost:45000, staffCost:12000, otherCost:8000}
+      {id:'1',contractNo:'CTR-101',clientName:'Ion & Maria',date:'2026-05-15',type:'Nuntă',hall:'Magnifique',adultGuests:150,kidGuests:10,adultPrice:400,kidPrice:200,advancePaid:20000,foodCost:25000,staffCost:8000,otherCost:5000},
+      {id:'2',contractNo:'CTR-102',clientName:'Firma IT SRL',date:'2026-06-20',type:'Corporate',hall:'Cristal',adultGuests:300,kidGuests:0,adultPrice:350,kidPrice:0,advancePaid:30000,foodCost:45000,staffCost:12000,otherCost:8000}
     ];
     const money = n => new Intl.NumberFormat('ro-RO',{style:'currency',currency:'RON',maximumFractionDigits:0}).format(Number(n)||0);
     const metrics = e => {
-      const gross = (Number(e.adultGuests)||0)*(Number(e.adultPrice)||0)+(Number(e.kidGuests)||0)*(Number(e.kidPrice)||0);
-      const costs = (Number(e.foodCost)||0)+(Number(e.staffCost)||0)+(Number(e.otherCost)||0);
+      const gross=(Number(e.adultGuests)||0)*(Number(e.adultPrice)||0)+(Number(e.kidGuests)||0)*(Number(e.kidPrice)||0);
+      const costs=(Number(e.foodCost)||0)+(Number(e.staffCost)||0)+(Number(e.otherCost)||0);
       return {gross,costs,profit:gross/1.19-costs};
     };
 
     function App(){
-      const [user,setUser]=useState(null), [email,setEmail]=useState(''), [password,setPassword]=useState('');
-      const [events,setEvents]=useState([]), [logs,setLogs]=useState([]), [status,setStatus]=useState('Se conectează la Firebase…');
-      const [error,setError]=useState(''), [tab,setTab]=useState('events'), [modal,setModal]=useState(null);
-      useEffect(()=>auth.onAuthStateChanged(u=>setUser(u)),[]);
+      const [user,setUser]=useState(null), [authReady,setAuthReady]=useState(false);
+      const [events,setEvents]=useState([]), [logs,setLogs]=useState([]);
+      const [status,setStatus]=useState('Se conectează…'), [error,setError]=useState('');
+      const [tab,setTab]=useState('events'), [modal,setModal]=useState(null);
+      const seedStarted=useRef(false);
+
+      useEffect(()=>auth.onAuthStateChanged(currentUser=>{
+        setUser(currentUser);
+        setAuthReady(true);
+        if(!currentUser){
+          setStatus('Se autentifică automat…');
+          auth.signInAnonymously().catch(err=>{
+            console.error('Firebase anonymous sign-in failed',err);
+            setError('Autentificarea fără e-mail nu a reușit. Activează Anonymous în Firebase Authentication.');
+            setStatus('Autentificare indisponibilă');
+          });
+        }
+      }),[]);
+
       useEffect(()=>{
-        if(!user){setEvents([]);setLogs([]);setStatus('Autentifică-te pentru a încărca datele online.');return;}
-        setStatus('Se sincronizează datele…');
-        const stopEvents=eventsCollection.orderBy('date','desc').onSnapshot(async snap=>{
-          if(snap.empty){
-            // Initialize the shared collection once when it is empty.
+        if(!user)return;
+        setStatus('Se sincronizează cu Firebase…');
+        const stopEvents=eventsCollection.orderBy('date','desc').onSnapshot(async snapshot=>{
+          if(snapshot.empty && !seedStarted.current){
+            seedStarted.current=true;
             const batch=db.batch();
-            INITIAL_EVENTS.forEach(e=>{const {id,...data}=e;batch.set(eventsCollection.doc(id),data);});
-            try{await batch.commit();}catch(err){console.error('Seed error',err);}
-          } else setEvents(snap.docs.map(d=>({id:d.id,...d.data()})));
-          setStatus('Conectat — sincronizare în timp real');
-        },err=>{console.error(err);setStatus('Eroare de sincronizare');setError('Nu pot citi evenimentele. Verifică Firestore și regulile de acces. '+err.message);});
-        const stopLogs=auditCollection.orderBy('createdAt','desc').limit(200).onSnapshot(s=>setLogs(s.docs.map(d=>({id:d.id,...d.data()}))),err=>console.error('Audit sync error',err));
+            INITIAL_EVENTS.forEach(({id,...data})=>batch.set(eventsCollection.doc(id),data));
+            try{await batch.commit();}catch(err){console.error(err);setError('Nu s-au putut inițializa datele. Verifică regulile Firestore.');}
+          } else {
+            setEvents(snapshot.docs.map(doc=>({id:doc.id,...doc.data()})));
+          }
+          setStatus('Online · sincronizare în timp real');
+        },err=>{
+          console.error(err);setStatus('Eroare de sincronizare');
+          setError('Nu pot accesa evenimentele. Verifică Firestore și regulile de acces. '+err.message);
+        });
+        const stopLogs=auditCollection.orderBy('createdAt','desc').limit(200).onSnapshot(snapshot=>setLogs(snapshot.docs.map(doc=>({id:doc.id,...doc.data()}))),err=>console.error('Audit sync error',err));
         return ()=>{stopEvents();stopLogs();};
       },[user]);
-      const signIn=async e=>{e.preventDefault();setError('');try{await auth.signInWithEmailAndPassword(email.trim(),password);}catch(err){setError('Autentificare nereușită. Verifică e-mailul, parola și activarea Firebase Authentication.');}};
-      const record=async(action,ref,details)=>auditCollection.add({action,ref,details,user:auth.currentUser?.email||'',createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+
+      const record=(action,ref,details)=>auditCollection.add({action,ref,details,user:'Utilizator',uid:user?.uid||'',createdAt:firebase.firestore.FieldValue.serverTimestamp()});
       const save=async data=>{
         try{
           const {id,...fields}=data;
           if(id){await eventsCollection.doc(id).set(fields,{merge:true});await record('EDIT',data.contractNo,'Contract actualizat');}
-          else {const doc=await eventsCollection.add(fields);await record('ADD',data.contractNo,`Creat eveniment pentru ${data.clientName}`);}
+          else {await eventsCollection.add(fields);await record('ADD',data.contractNo,`Creat eveniment pentru ${data.clientName}`);}
           setModal(null);setError('');
-        }catch(err){setError('Salvarea online a eșuat. Verifică regulile Firestore. '+err.message);}
+        }catch(err){console.error(err);setError('Salvarea online a eșuat. Verifică regulile Firestore. '+err.message);}
       };
-      const remove=async ev=>{
-        if(!confirm(`Ștergi contractul ${ev.contractNo}?`))return;
-        try{await eventsCollection.doc(ev.id).delete();await record('DELETE',ev.contractNo,'Eveniment șters.');}
+      const remove=async event=>{
+        if(!window.confirm(`Ștergi contractul ${event.contractNo}?`))return;
+        try{await eventsCollection.doc(event.id).delete();await record('DELETE',event.contractNo,'Eveniment șters.');}
         catch(err){setError('Ștergerea a eșuat. Verifică regulile Firestore. '+err.message);}
       };
       const totals=useMemo(()=>events.reduce((a,e)=>{const m=metrics(e);a.gross+=m.gross;a.costs+=m.costs;a.profit+=m.profit;return a;},{gross:0,costs:0,profit:0}),[events]);
-      if(!user)return <div className="min-h-screen flex items-center justify-center p-4"><form onSubmit={signIn} className="panel w-full max-w-md rounded-2xl p-7 space-y-5 shadow-2xl">
-        <img src="mandachi-logo.svg" alt="Mandachi Hotel & Spa" className="w-48 h-auto mx-auto" />
-        <h1 className="text-center text-xl font-bold">Autentificare</h1>
-        <p className="text-xs text-center text-slate-400">Folosește contul creat în Firebase Authentication.</p>
-        <label className="block text-sm text-slate-300">E-mail<input required type="email" autoComplete="username" value={email} onChange={e=>setEmail(e.target.value)} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-700 p-3" /></label>
-        <label className="block text-sm text-slate-300">Parolă<input required type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-700 p-3" /></label>
-        {error&&<p role="alert" className="text-sm text-rose-400">{error}</p>}
-        <button className="w-full rounded-lg bg-amber-400 py-3 font-bold text-slate-950">Intră în aplicație</button>
-        <p className="text-xs text-center text-slate-500">{status}</p>
-      </form></div>;
+
+      if(!authReady||!user)return <div className="min-h-screen flex items-center justify-center p-5"><div className="panel w-full max-w-md rounded-2xl p-8 text-center shadow-2xl"><img src="mandachi-logo.svg" alt="Mandachi Hotel & Spa" className="mx-auto mb-6 w-48"/><div className="mx-auto mb-4 h-9 w-9 animate-spin rounded-full border-4 border-amber-400 border-t-transparent"></div><p className="text-sm text-slate-300">{status}</p>{error&&<p role="alert" className="mt-4 text-sm text-rose-300">{error}</p>}</div></div>;
+
       return <div className="min-h-screen">
-        <header className="panel sticky top-0 z-10"><div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4"><img src="mandachi-logo.svg" alt="Mandachi Hotel & Spa" className="h-12 w-auto"/><span className="hidden sm:inline text-xs text-slate-400">Gestiune evenimente</span></div>
-          <div className="flex items-center gap-3"><span className="hidden sm:block text-xs text-slate-400">{user.email}</span><button onClick={()=>auth.signOut()} className="rounded-lg bg-slate-800 px-3 py-2 text-sm">Deconectare</button></div>
-        </div></header>
-        <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-5">
-          <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2">{[['events','Evenimente'],['dashboard','Dashboard'],['audit','Istoric']].map(([id,label])=><button key={id} onClick={()=>setTab(id)} className={`rounded-lg px-4 py-2 text-sm ${tab===id?'bg-amber-400 text-slate-950 font-bold':'bg-slate-800 text-slate-300'}`}>{label}</button>)}</div>{tab==='events'&&<button onClick={()=>setModal({})} className="rounded-lg bg-amber-400 px-4 py-2 font-bold text-slate-950">+ Adaugă eveniment</button>}</div>
+        <header className="panel sticky top-0 z-10"><div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3"><div className="flex items-center gap-4"><img src="mandachi-logo.svg" alt="Mandachi Hotel & Spa" className="h-12 w-auto"/><span className="hidden text-xs text-slate-400 sm:inline">Gestiune evenimente</span></div><div className="text-right text-xs text-slate-400">Utilizator simplu · fără e-mail</div></div></header>
+        <main className="mx-auto max-w-7xl space-y-5 p-4 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2">{[['events','Evenimente'],['dashboard','Dashboard'],['audit','Istoric']].map(([id,label])=><button key={id} onClick={()=>setTab(id)} className={`rounded-lg px-4 py-2 text-sm ${tab===id?'bg-amber-400 font-bold text-slate-950':'bg-slate-800 text-slate-300'}`}>{label}</button>)}</div>{tab==='events'&&<button onClick={()=>setModal({})} className="rounded-lg bg-amber-400 px-4 py-2 font-bold text-slate-950">+ Adaugă eveniment</button>}</div>
           <p className="text-xs text-emerald-400">● {status}</p>{error&&<div role="alert" className="rounded-lg border border-rose-800 bg-rose-950/50 p-3 text-sm text-rose-300">{error}</div>}
-          {tab==='dashboard'&&<div className="grid gap-4 sm:grid-cols-3">{[['Venit brut',totals.gross],['Costuri',totals.costs],['Profit net',totals.profit]].map(([l,v])=><div key={l} className="panel rounded-xl p-5"><p className="text-sm text-slate-400">{l}</p><p className="mt-2 text-2xl font-bold">{money(v)}</p></div>)}</div>}
-          {tab==='events'&&<div className="panel overflow-x-auto rounded-xl"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-900 text-slate-400"><tr>{['Contract / Client','Dată / Sală','Invitați','Venit brut','Costuri','Profit net',''].map(x=><th key={x} className="p-3">{x}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{events.map(e=>{const m=metrics(e);return <tr key={e.id}><td className="p-3"><b className="text-amber-300">{e.contractNo}</b><div>{e.clientName}</div></td><td className="p-3">{e.date}<div className="text-slate-400">{e.hall}</div></td><td className="p-3">{(+e.adultGuests||0)+(+e.kidGuests||0)}</td><td className="p-3">{money(m.gross)}</td><td className="p-3 text-rose-300">{money(m.costs)}</td><td className="p-3 text-emerald-300">{money(m.profit)}</td><td className="p-3 whitespace-nowrap"><button onClick={()=>setModal(e)} className="mr-2 text-amber-300">Editează</button><button onClick={()=>remove(e)} className="text-rose-300">Șterge</button></td></tr>})}</tbody></table>{events.length===0&&<p className="p-6 text-slate-400">Nu există evenimente.</p>}</div>}
-          {tab==='audit'&&<div className="space-y-3">{logs.map(l=><div key={l.id} className="panel flex flex-wrap justify-between gap-2 rounded-lg p-4"><div><b className="text-amber-300">{l.action} · {l.ref}</b><p className="text-sm text-slate-400">{l.details}</p></div><span className="text-xs text-slate-500">{l.user}</span></div>)}{logs.length===0&&<p className="text-slate-400">Istoricul se va afișa aici.</p>}</div>}
-        </div>
+          {tab==='dashboard'&&<div className="grid gap-4 sm:grid-cols-3">{[['Venit brut',totals.gross],['Costuri',totals.costs],['Profit net',totals.profit]].map(([label,value])=><div key={label} className="panel rounded-xl p-5"><p className="text-sm text-slate-400">{label}</p><p className="mt-2 text-2xl font-bold">{money(value)}</p></div>)}</div>}
+          {tab==='events'&&<div className="panel overflow-x-auto rounded-xl"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-900 text-slate-400"><tr>{['Contract / Client','Dată / Sală','Invitați','Venit brut','Costuri','Profit net','Acțiuni'].map(x=><th key={x} className="p-3">{x}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{events.map(event=>{const m=metrics(event);return <tr key={event.id}><td className="p-3"><b className="text-amber-300">{event.contractNo}</b><div>{event.clientName}</div></td><td className="p-3">{event.date}<div className="text-slate-400">{event.hall}</div></td><td className="p-3">{(+event.adultGuests||0)+(+event.kidGuests||0)}</td><td className="p-3">{money(m.gross)}</td><td className="p-3 text-rose-300">{money(m.costs)}</td><td className="p-3 text-emerald-300">{money(m.profit)}</td><td className="whitespace-nowrap p-3"><button onClick={()=>setModal(event)} className="mr-2 text-amber-300">Editează</button><button onClick={()=>remove(event)} className="text-rose-300">Șterge</button></td></tr>})}</tbody></table>{events.length===0&&<p className="p-6 text-slate-400">Nu există evenimente.</p>}</div>}
+          {tab==='audit'&&<div className="space-y-3">{logs.map(log=><div key={log.id} className="panel flex flex-wrap justify-between gap-2 rounded-lg p-4"><div><b className="text-amber-300">{log.action} · {log.ref}</b><p className="text-sm text-slate-400">{log.details}</p></div><span className="text-xs text-slate-500">Utilizator</span></div>)}{logs.length===0&&<p className="text-slate-400">Istoricul se va afișa aici.</p>}</div>}
+        </main>
         {modal&&<EventForm initial={modal} close={()=>setModal(null)} save={save}/>}
       </div>;
     }
+
     function EventForm({initial,close,save}){
       const fields=[['contractNo','Contract'],['clientName','Client'],['date','Dată','date'],['hall','Sală'],['adultGuests','Adulți','number'],['adultPrice','Preț meniu adult','number'],['kidGuests','Copii','number'],['kidPrice','Preț meniu copil','number'],['advancePaid','Avans','number'],['foodCost','Cost mâncare','number'],['staffCost','Cost personal','number'],['otherCost','Alte costuri','number']];
       const [form,setForm]=useState({contractNo:'CTR-',clientName:'',date:'',hall:'Magnifique',adultGuests:0,adultPrice:0,kidGuests:0,kidPrice:0,advancePaid:0,foodCost:0,staffCost:0,otherCost:0,...initial});
-      return <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/80 p-4"><form onSubmit={e=>{e.preventDefault();save(form)}} className="panel max-h-[90vh] w-full max-w-2xl space-y-4 overflow-y-auto rounded-2xl p-6"><div className="flex justify-between"><h2 className="text-lg font-bold">{initial.id?'Editează eveniment':'Eveniment nou'}</h2><button type="button" onClick={close}>✕</button></div><div className="grid gap-4 sm:grid-cols-2">{fields.map(([name,label,type='text'])=><label key={name} className="text-xs text-slate-400">{label}<input required={['contractNo','clientName','date','hall'].includes(name)} type={type} value={form[name]??''} onChange={e=>setForm({...form,[name]:type==='number'?Number(e.target.value):e.target.value})} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-white" /></label>)}</div><div className="flex justify-end gap-3"><button type="button" onClick={close} className="rounded-lg bg-slate-700 px-4 py-2">Anulează</button><button className="rounded-lg bg-amber-400 px-5 py-2 font-bold text-slate-950">Salvează online</button></div></form></div>;
+      return <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/80 p-4"><form onSubmit={e=>{e.preventDefault();save(form)}} className="panel max-h-[90vh] w-full max-w-2xl space-y-4 overflow-y-auto rounded-2xl p-6"><div className="flex justify-between"><h2 className="text-lg font-bold">{initial.id?'Editează eveniment':'Eveniment nou'}</h2><button type="button" onClick={close}>✕</button></div><div className="grid gap-4 sm:grid-cols-2">{fields.map(([name,label,type='text'])=><label key={name} className="text-xs text-slate-400">{label}<input required={['contractNo','clientName','date','hall'].includes(name)} type={type} value={form[name]??''} onChange={e=>setForm({...form,[name]:type==='number'?Number(e.target.value):e.target.value})} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-white"/></label>)}</div><div className="flex justify-end gap-3"><button type="button" onClick={close} className="rounded-lg bg-slate-700 px-4 py-2">Anulează</button><button className="rounded-lg bg-amber-400 px-5 py-2 font-bold text-slate-950">Salvează online</button></div></form></div>;
     }
     ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
   </script>
